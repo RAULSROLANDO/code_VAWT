@@ -1,0 +1,262 @@
+clc
+clear all
+%function calculates the power coefficient and average torque \%for a vertical axis wind turbine according to the procedure stated at: \%"Double-Multiple Streamtube model for Darrieus wind turbines,
+%I.Paraschivoiu", the equations have been adapted to a straight bladed wind turbine when necessary.
+%function [Cpt, av_T] = f_Cp_and_av_T2 (vo, w, R, N, C, L, Ao, NACA)
+% INPUT PARAMETERS
+vo =11; %ambient air speed m/s .
+w=93; %rotor angular speed (rad/s)
+R=0.25; %rotor radius m.
+N=2; %number of blades .
+c=0.05; %chord
+H=0.8; %Blade length
+Ao=0; %initial angle of attack
+%Airfoil used (0018)
+%output cpt=power coefficient
+%av_T=torque
+
+%%Constants
+kv=1.4607e-5; %viscosidad dinamica a 15ºC
+rho=1.225; %densidad en kg/m^3
+n=36; %numero de tubos de corriente
+
+%theta= vector que contiene los angulos entre el streamtube 
+
+thetau=linspace(-89*pi/180,89*pi/180,n); %angulos aguas arriba
+thetad=linspace(91*pi/180,269*pi/180,n); %angulos aguas arriba
+
+TSR=w*R/vo; %Tip speed ratio
+S=2*R*H; %area barrida
+
+%%CÁLCULO AGUAS ARRIBA, hallamos el valor de au para cada streamtube (cada
+%%valor de theta)
+
+i=0;
+while (i~=n)
+    i=i+1;
+    au=1.01; %factor de inducción aguas arriba
+    newau=1; %au tiene que ser diferentente de newau
+
+    while ((au-newau)>1e-3)
+        au=newau;
+        vu=vo.*(au);  %Vu=velocidad aguas arriba en el disco actuador
+        TSR_local=R*w./vu; %TSR local
+
+        wu=sqrt(vu.^2.*((TSR_local-sin(thetau(i)))).^2+(cos(thetau(i)).^2)); %velocidad resultante local
+        Re=wu*c/kv; %blade reynolds number
+
+    
+        
+        costh = cos(thetau(i));
+        cosao = cos(Ao);
+        sinth = sin(thetau(i)); 
+        sinao = sin(Ao); 
+        A = asin((costh.*cosao-(TSR_local-sinth).*sinao)...
+            ./sqrt((TSR_local- sinth).^2+(costh.^2))); %formula 
+
+         [tabla_datos_1,txt,alpha1] = ...
+             xlsread('25k_165k.xlsx','A2:A101');
+        [tabla_datos_1,txt,Re1] = ...
+            xlsread('25k_165k','B1:C1');
+        [tabla_datos_1,txt,Cl1] = ...
+            xlsread('25k_165k.xlsx','B2:C101');
+        [tabla_datos_1,txt,Cd1] = ...
+            xlsread('25k_165k.xlsx','J2:K101');
+        alpha1=cell2mat(alpha1);
+        % alpha1=transpose(alpha1);
+        
+        Re1=cell2mat(Re1);
+        Re1=transpose(Re1);
+        Cl1=cell2mat(Cl1);
+        Cl1=transpose(Cl1);
+        Cd1=cell2mat(Cd1);
+        Cd1=transpose(Cd1);
+        
+        
+        
+        % Crear matrices de A y Re con las mismas dimensiones que cl1
+        [alpha_mesh,Re_mesh] = meshgrid(alpha1,Re1);
+        
+      
+        
+        % Interpolar los valores de coeficiente de sustentación
+        cl_final = interp2(alpha_mesh,Re_mesh,Cl1,A,Re);
+        cd_final = interp2(alpha_mesh,Re_mesh,Cd1,A,Re);
+                
+
+        %
+
+        Cnu = cl_final.*cosd (A) +  cd_final.*sind(A); %A en grados
+        Ctu = cl_final.*sind (A) - cd_final.*cosd(A);
+
+        %ahora tenemos que crear la funcio que va a encotrar el factor de
+        %interferencia au
+
+        %g=@(thetau) (abs(sec(thetau)).*(Cnu.*cos(thetau)-Ctu.*sin(thetau)).*(wu./vu).^2);
+        g= @(thetau)(abs(sec(thetau))...
+            .*(Cnu.*cos(thetau)-Ctu.*sin(thetau)).*(wu./vu).^2);
+
+        y=quadl(g,-89*pi/180,89*pi/180);
+
+        fup=N*c*y/(8*pi*R);
+
+        %[newau]= solve('fuo*newau=pi*(1-newau)')
+        %syms newau
+        %S1= solve('fup*newau*R=pi*(1-newau)*r(k)','newau')
+
+        newau= pi/(fup+pi);
+    end
+
+     Auvector(i)=A;
+    auvector(i)=newau;
+
+    Fnu(i)=(c*H/S).*Cnu.*(wu/vo).^2; %fuerza normal
+    Ftu(i)=(c*H/S).*Cnu.*(wu/vo).^2; %fuerza tangencial
+    Tup(i)=0.5*rho*c*R*H.*Ctu.*wu.^2;
+
+end
+
+%Torque en aguas arriba
+
+ts2=trapz(thetau,Tup);
+av_Tup=N*(ts2)/2*pi; %average torque en aguas arriba
+
+%coeficientes
+
+av_Cqu=av_Tup/(0.5*rho*S*H*vo^2);
+Cpu=av_Cqu.*TSR;
+
+%%AGUAS ABAJO
+
+j=n+1;
+flag=0;
+i=0;
+
+while(j~=1)
+    j=j-1;
+    i=i+1;  %factor de interferencia aguas abajo
+    ad=1.01; %factor de inducion de velocidad aguas abajo
+    newad=auvector(j); %inicializamos el bucle, au tiene que ser distinto de newau
+
+
+    while((ad-newad)>1e-3)
+        ad=newad;
+        ve = vo.*((2*auvector(j))-1); %velocidad dentro del rotor
+        vd=ve.*ad; %velocidad del aire en la parte aguas abajo del rotor
+        X=R*w./vd;
+        wd=sqrt(vd.^2.*((X-sin(thetad(i)))...
+            ^2+(cos(thetad(i)))^2));
+        Re=wd.*c./kv;
+
+        costh = cos(thetad(i));
+        cosao = cos(Ao);
+        sinth = sin(thetad(i)); 
+        sinao = sin(Ao); 
+        A = asin((costh.*cosao-(X-sinth).*sinao)./sqrt((X- sinth).^2+(costh.^2)));
+
+        neg=0;
+        
+        if(sign(A)==-1)
+            neg=1;
+        end
+
+
+         [tabla_datos_1,txt,alpha1] = ...
+             xlsread('25k_165k.xlsx','A2:A101');
+        [tabla_datos_1,txt,Re1] =...
+            xlsread('25k_165k','B1:C1');
+        [tabla_datos_1,txt,Cl1] = ...
+            xlsread('25k_165k.xlsx','B2:C101');
+        [tabla_datos_1,txt,Cd1] =...
+            xlsread('25k_165k.xlsx','J2:K101');
+        alpha1=cell2mat(alpha1);
+        % alpha1=transpose(alpha1);
+        
+        Re1=cell2mat(Re1);
+        Re1=transpose(Re1);
+        Cl1=cell2mat(Cl1);
+        Cl1=transpose(Cl1);
+        Cd1=cell2mat(Cd1);
+        Cd1=transpose(Cd1);
+        
+        
+        
+        % Crear matrices de A y Re con las mismas dimensiones que cl1
+        [alpha_mesh,Re_mesh] = meshgrid(alpha1,Re1);
+        
+ 
+
+         % Interpolar los valores de coeficiente de sustentación
+        cl_final = interp2(alpha_mesh,Re_mesh,Cl1,A,Re);
+        cd_final = interp2(alpha_mesh,Re_mesh,Cd1,A,Re);
+
+        if(neg==1)
+            A=1*A;
+            cl_final=-1*cl_final;
+            cd_final=1*cd_final;
+        end
+
+
+        
+        Cnd = cl_final*cosd(A) + cd_final*sind(A); %A en grados
+        Ctd = cl_final*sind(A) -cd_final*cosd(A);
+
+         g=@(thetad) (abs(sec(thetad))....
+             .*(Cnd.*cos(thetad)-Ctd.*sin(thetad)).*(wd./vd).^2);
+
+        y=quadl(g,91*pi/180,269*pi/180);
+
+        fdw=N*c*y/(8*pi*R);
+
+        %[newad]=solve('fdw*newad=pi*(1-newad)')
+
+        %syms newad
+
+        %s1=solve('fdw*newad*R=pi(1-newad)*r(k)','newad')
+        if(flag==0)
+            newad=pi./(fdw+pi);
+        end
+
+        % si el proceso de iteración no converge (que puede ocurrir), el
+        % valor del factor de interferencia aguas arriba del mismo tubo de
+        % corriente es el que se coge
+
+        if (newad<0.01)
+            warning('newad<0.01 at theta = %d and A=%d', (theta(i)*180/pi),A);
+            
+            if(i>1)
+
+                newad=advector(i-1);
+
+            else
+
+                newad= auvector (i);
+            end
+
+            flag=1;
+
+        end
+    end
+
+
+    Advector(i)=A;
+    advector(i)=newad; %almacenamos el valor de ad en un vector
+
+    %%Calculamos fuerzas y coeficientes
+
+    Fnd(i)=(c*H./S).*Cnd.*(wd./vo).^2;
+    Ftd(i)=(c.*H./S).*Ctd.*(wd./vo).^2;
+    Tdw(i)=0.5.*rho.*c.*R*H.*Ctd.*wd^2;
+    
+
+end
+
+    %torque en la parte de aguas abajo
+
+    ts4=trapz(thetad,Tdw);
+    av_Tdw=N*(ts4./2*pi);  
+
+    av_Cqd=av_Tdw./(0.5.*rho.*S.*R.*vo^2);
+    Cpd=-av_Cqd*TSR;
+    Cpt=Cpd+Cpu;
+    av_T=av_Tup+av_Tdw;
